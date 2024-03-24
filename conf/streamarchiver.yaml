@@ -1,0 +1,26 @@
+yt_dlp_command: yt-dlp --wait-for-video 15
+
+# Manager will keep the number of active downloads under this value
+concurrent_downloads: 20
+
+# Replace with your own yt_dlp configuration
+yt_dlp_config: >
+  --cookies cookies.txt
+  --add-headers "User-Agent:Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+  --add-headers "Referrer:https://www.twitch.tv/"
+  --download-archive /dev/null
+  -S "res:1080"
+
+# The order of streams is important. If a download needs to be canceled due to
+# bandwidth limitations, items lower down on the list will be canceled first.
+streams:
+  - name: OurChickenLife
+    where: Twitch
+  - name: MegaRadio
+    where: Pomf
+
+# Minimum time to wait between starting or stopping new jobs.
+loop_seconds: 5
+
+# Change this to where you want your downloads stored
+vods_location: ~/VODs

@@ -1,0 +1,15 @@
+[project]
+name = "streamarchiver"
+version = "0.1"
+dependencies = [
+    "playwright",
+    "pydantic",
+    "click",
+    "jinja2",
+    "PyYAML",
+    "yt-dlp @ git+https://github.com/bistromathica/yt-dlp.git@pomftv",
+]
+requires-python = ">= 3.10"
+
+[project.scripts]
+streamarchiver = "streamarchiver:cli"
