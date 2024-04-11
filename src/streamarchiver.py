@@ -21,8 +21,8 @@ class Streamer(BaseModel):
 
     def get_stream_url(self) -> str:
         try:
-            return {'Twitch': f'https://www.twitch.tv/{self.username}',
-                    'Pomf': f'https://pomf.tv/stream/{self.username}'}[self.platform]
+            return {'twitch': f'https://www.twitch.tv/{self.username}',
+                    'pomf': f'https://pomf.tv/stream/{self.username}'}[self.platform.lower()]
         except KeyError as e:
             raise NotImplemented from e
 
@@ -54,13 +54,14 @@ should_stop = asyncio.Event()
 
 class YtdlpManager:
     """Wraps asyncio.subprocess.Process of a yt-dlp instance."""
-    def __init__(self, config: configuration.Config, streamer: Streamer, priority: int):
+    def __init__(self, config: configuration.Config, streamer: Streamer, priority: int, verbosity: int = 0):
         self.config = config
         self.priority = priority
         self.streamer = streamer
         self.status = YtdlpStatus.NONE
         self.process: None | asyncio.subprocess.Process = None
         self.task: None | asyncio.Task = None
+        self.verbosity = verbosity
 
     async def manage(self):
         cwd = self.streamer.vods_location(self.config.vods_location)
@@ -120,13 +121,15 @@ class YtdlpManager:
             elif match := FINISHED_DOWNLOADING.match(line):
                 self.finished()
                 logging.debug(f"STDOUT: %s", line)
-            # logging.debug(f"STDOUT: %s", line)
+            if self.verbosity > 2:
+                logging.debug(f"STDOUT: %s", line)
 
     async def process_stderr(self) -> None:
         while line := (await self.process.stderr.readline()).decode().strip():
             if match := NOT_LIVE.match(line):
                 self.waiting()
-            # logging.debug("STDERR: %s", line)
+            if self.verbosity > 2:
+                logging.debug("STDERR: %s", line)
 
     def downloading(self):
         if self.status != YtdlpStatus.DOWNLOADING:
@@ -145,10 +148,12 @@ class YtdlpManager:
 
 
 class YtdlpManagerManager:
-    def __init__(self, config: configuration.Config):
+    def __init__(self, config: configuration.Config, verbosity: int):
         # Runs, stops, and reports on a list of YtdlpManagers
         self.config = config
-        self.managers = [YtdlpManager(config, Streamer(username=stream.name, platform=stream.where), priority=priority)
+        self.managers = [YtdlpManager(config,
+                                      Streamer(username=stream.name, platform=stream.where), priority=priority,
+                                      verbosity=verbosity)
                          for priority, stream in enumerate(config.streams)]
         self.loop_seconds = 5
         report_task = asyncio.create_task(self.report_periodically())
@@ -211,7 +216,7 @@ class YtdlpManagerManager:
             await asyncio.sleep(20)
 
 
-async def main(config: configuration.Config):
+async def main(config: configuration.Config, verbosity: int):
     """Loops infinitely. Checks if a yt-dlp instance exists in processes dict and opens
     with open_ytdlp if it does not."""
     vods = Path(config.vods_location).expanduser()
@@ -220,7 +225,7 @@ async def main(config: configuration.Config):
 
     loop = asyncio.get_running_loop()
 
-    manager = YtdlpManagerManager(config)
+    manager = YtdlpManagerManager(config, verbosity)
 
     loop.add_signal_handler(signal.SIGINT, manager.stop_all)
     loop.add_signal_handler(signal.SIGTERM, manager.stop_all)
@@ -240,7 +245,8 @@ async def main(config: configuration.Config):
 
 
 @click.group()
-@click.option('--verbose', '-v', is_flag=True, default=[], multiple=True, help='Verbose output')
+@click.option('--verbose', '-v', is_flag=True, default=[], multiple=True,
+              help='Verbose output. Repeat this up to 3 times for maximum chattiness (-vvv).')
 @click.option('--config', '-c', default=None, help='Custom location for streamarchiver.yaml')
 @click.pass_context
 def cli(ctx, verbose, config: str):
@@ -250,10 +256,13 @@ def cli(ctx, verbose, config: str):
         logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
     elif loglevel:
         logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    if loglevel > 3:
+        logging.debug(f"You fool! There is no higher log level than 3.")
     ctx.obj['config'] = configuration.get(config)
+    ctx.obj['verbosity'] = loglevel
 
 
 @cli.command(help='Run streamarchiver in a loop')
 @click.pass_context
 def run(ctx):
-    asyncio.run(main(ctx.obj['config']))
+    asyncio.run(main(ctx.obj['config'], ctx.obj['verbosity']))
