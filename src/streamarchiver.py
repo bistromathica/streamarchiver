@@ -49,6 +49,8 @@ class YtdlpStatus(Enum):
 
 
 TERM_TIMEOUT = 5
+RETRIES = 5
+RETRY_SLEEP = 10
 should_stop = asyncio.Event()
 
 
@@ -69,34 +71,42 @@ class YtdlpManager:
         if (Path(cwd)/'yt-dlp.conf').exists():
             logging.info(f'Found custom yt-dlp.conf in {cwd}.')
 
-        self.process: asyncio.subprocess.Process = await asyncio.create_subprocess_shell(
-            self.config.yt_dlp_command + " " + self.streamer.get_stream_url(),
-            cwd=cwd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE)
-        started = datetime.now()
-        logging.debug("Started %s on %s", self, started)
+        for retry in range(0, RETRIES):
+            if retry:
+                logging.debug("Waiting %s to retry: %s", RETRY_SLEEP, self)
+                await asyncio.sleep(RETRY_SLEEP)
+                logging.info("Retrying: %s", self)
+            self.process: asyncio.subprocess.Process = await asyncio.create_subprocess_shell(
+                self.config.yt_dlp_command + " " + self.streamer.get_stream_url(),
+                cwd=cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE)
+            started = datetime.now()
+            logging.debug("Started %s on %s", self, started)
 
-        try:
-            self.status = YtdlpStatus.STARTED
-            tasks = self.process_stderr(), self.process_stdout()
-            await asyncio.gather(*tasks)
-            await self.process.wait()
-
-            if (datetime.now() - started) < timedelta(seconds=10):
-                # It's restarting too fast, something is wrong
-                self.status = YtdlpStatus.FAILURE
-                logging.debug(f"yt-dlp self ended too quickly. Giving up. %s", self)
-
-        except Exception:
-            logging.info(f"Terminating {self}")
-            self.process.terminate()
             try:
-                await asyncio.wait_for(self.process.wait(), TERM_TIMEOUT)
-            except asyncio.TimeoutError:
-                logging.error(f"Unruly process. kill -9, you little shit: {self}")
-                self.process.kill()
-            raise
+                self.status = YtdlpStatus.STARTED
+                tasks = self.process_stderr(), self.process_stdout()
+                await asyncio.gather(*tasks)
+                await self.process.wait()
+
+                if (datetime.now() - started) < timedelta(seconds=10):
+                    logging.debug(f"yt-dlp self ended too quickly. %s", self)
+                    if retry == RETRIES-1:
+                        self.status = YtdlpStatus.FAILURE
+                        logging.error("yt-dlp exceeded maximum retries. Giving up: ", self)
+
+                break  # Success. Break retry loop.
+            except Exception:
+                logging.info(f"Terminating {self}")
+                self.process.terminate()
+                try:
+                    await asyncio.wait_for(self.process.wait(), TERM_TIMEOUT)
+                except asyncio.TimeoutError:
+                    logging.error(f"Unruly process. kill -9, you little shit: {self}")
+                    self.process.kill()
+                raise
+
 
     def run(self):
         if self.task and not self.task.done():
